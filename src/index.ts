@@ -11,35 +11,56 @@ import {
   ListToolsRequestSchema,
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
-import { ExponentialAPI } from './api.js';
+import { ExponentialClient, createConfigStore } from 'exponential-sdk';
+import type { Action, Project, Workspace } from 'exponential-sdk';
 import { readFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 
-// Load config
-const CONFIG_PATH = join(homedir(), '.config', 'exponential-mcp', 'config.json');
+const LEGACY_CONFIG_PATH = join(homedir(), '.config', 'exponential-mcp', 'config.json');
+const configStore = createConfigStore({ projectName: 'exponential-mcp' });
 
-interface Config {
-  apiKey: string;
-  baseUrl?: string;
+function migrateLegacyConfig(): void {
+  if (configStore.isAuthenticated() || !existsSync(LEGACY_CONFIG_PATH)) {
+    return;
+  }
+
+  try {
+    const legacy = JSON.parse(readFileSync(LEGACY_CONFIG_PATH, 'utf-8'));
+    if (legacy?.apiKey) {
+      configStore.saveConfig({
+        token: legacy.apiKey,
+        apiUrl: legacy.baseUrl || 'https://www.exponential.im',
+      });
+    }
+  } catch {
+    // Ignore legacy config parsing errors.
+  }
 }
 
-function loadConfig(): Config {
-  // Try config file first
-  if (existsSync(CONFIG_PATH)) {
-    const config = JSON.parse(readFileSync(CONFIG_PATH, 'utf-8'));
-    return config;
+function loadClientConfig(): { token: string; apiUrl: string } {
+  migrateLegacyConfig();
+
+  if (configStore.isAuthenticated()) {
+    const config = configStore.loadConfig();
+    return { token: config.token, apiUrl: config.apiUrl };
   }
-  
-  // Fall back to environment variable
-  const apiKey = process.env.EXPONENTIAL_API_KEY;
-  if (!apiKey) {
+
+  const token = process.env.EXPONENTIAL_API_KEY || process.env.EXPONENTIAL_API_TOKEN;
+  const apiUrl =
+    process.env.EXPONENTIAL_API_URL ||
+    process.env.EXPONENTIAL_BASE_URL ||
+    'https://www.exponential.im';
+
+  if (!token) {
     console.error('Error: No API key found.');
-    console.error('Run "npx exponential-mcp init" to set up, or set EXPONENTIAL_API_KEY env var.');
+    console.error(
+      'Run "npx exponential-mcp init" to set up, or set EXPONENTIAL_API_KEY env var.'
+    );
     process.exit(1);
   }
-  
-  return { apiKey, baseUrl: process.env.EXPONENTIAL_BASE_URL };
+
+  return { token, apiUrl };
 }
 
 // Tool definitions
@@ -141,8 +162,12 @@ const TOOLS: Tool[] = [
 ];
 
 async function main() {
-  const config = loadConfig();
-  const api = new ExponentialAPI(config);
+  const config = loadClientConfig();
+  const client = new ExponentialClient({
+    token: config.token,
+    apiUrl: config.apiUrl,
+  });
+  const trpcClient = (client as unknown as { client: any }).client;
 
   const server = new Server(
     {
@@ -168,7 +193,9 @@ async function main() {
     try {
       switch (name) {
         case 'get_projects': {
-          const projects = await api.getProjects(args?.workspaceId as string);
+          const projects: Project[] = await client.projects.list({
+            workspaceId: args?.workspaceId as string,
+          });
           return {
             content: [
               {
@@ -180,10 +207,24 @@ async function main() {
         }
 
         case 'get_actions': {
-          const actions = await api.getActions({
-            projectId: args?.projectId as string,
-            status: args?.status as string,
-          });
+          const status = args?.status as string | undefined;
+          const projectId = args?.projectId as string | undefined;
+          let actions: Action[];
+
+          if (status === 'COMPLETED') {
+            actions = await client.actions.getKanban({
+              projectId,
+              status: 'DONE',
+            });
+          } else if (status === 'CANCELLED') {
+            actions = await client.actions.getKanban({
+              projectId,
+              status: 'CANCELLED',
+            });
+          } else {
+            actions = await client.actions.list({ projectId });
+          }
+
           return {
             content: [
               {
@@ -195,7 +236,10 @@ async function main() {
         }
 
         case 'create_action': {
-          const action = await api.quickCreateAction(args?.text as string);
+          // SDK does not yet expose quickCreate, so we use the underlying tRPC client.
+          const action = await trpcClient.action.quickCreate.mutate({
+            text: args?.text as string,
+          });
           return {
             content: [
               {
@@ -207,7 +251,11 @@ async function main() {
         }
 
         case 'complete_action': {
-          const action = await api.completeAction(args?.id as string);
+          // SDK does not yet expose action updates, so we use the underlying tRPC client.
+          const action = await trpcClient.action.update.mutate({
+            id: args?.id as string,
+            status: 'COMPLETED',
+          });
           return {
             content: [
               {
@@ -219,7 +267,9 @@ async function main() {
         }
 
         case 'get_goals': {
-          const goals = await api.getGoals(args?.workspaceId as string);
+          const goals = await trpcClient.goal.list.query({
+            workspaceId: args?.workspaceId as string,
+          });
           return {
             content: [
               {
@@ -231,7 +281,9 @@ async function main() {
         }
 
         case 'search': {
-          const results = await api.search(args?.query as string);
+          const results = await trpcClient.search.global.query({
+            query: args?.query as string,
+          });
           return {
             content: [
               {
@@ -243,7 +295,7 @@ async function main() {
         }
 
         case 'get_workspaces': {
-          const workspaces = await api.getWorkspaces();
+          const workspaces: Workspace[] = await client.workspaces.list();
           return {
             content: [
               {

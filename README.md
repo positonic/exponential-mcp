@@ -1,19 +1,36 @@
 # Exponential MCP
 
-Connect Claude to your [Exponential](https://exponential.im) workspace. Manage projects, actions, and OKRs directly from Claude Desktop.
+Connect Claude to your [Exponential](https://exponential.im) workspace. Manage projects, actions, and OKRs directly from Claude.
 
 ## Quick Start
 
+### 1. Create an API Key
+
+Go to [exponential.im/settings/api-keys](https://www.exponential.im/settings/api-keys) and create a new key:
+- Click **Create API Key**
+- Select **JWT Token** as the token type
+- Copy the generated key
+
+### 2. Set Up the MCP Server
+
 ```bash
-# 1. Get your API key from exponential.im/settings/api-keys
-
-# 2. Set up the MCP server
 npx exponential-mcp init
-
-# 3. Restart Claude Desktop
-
-# 4. Ask Claude to manage your tasks!
 ```
+
+Paste your API key when prompted.
+
+### 3. Configure for Your Claude Client
+
+**For Claude Desktop:**
+- Restart Claude Desktop
+- The server will be automatically configured
+
+**For Claude Code (VSCode Extension):**
+- The server uses `.mcp.json` in your project directory
+- Reload your VSCode window (`Cmd+Shift+P` → "Developer: Reload Window")
+- The server will be available in your current project
+
+### 4. Ask Claude to manage your tasks!
 
 ## What Claude Can Do
 
@@ -28,21 +45,39 @@ Once connected, Claude can:
 
 ## Manual Setup
 
-If the automatic setup doesn't work, add this to `~/.claude/claude_desktop_config.json`:
+### For Claude Desktop
+
+Add this to `~/.claude/claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "exponential": {
       "command": "npx",
-      "args": ["exponential-mcp", "serve"],
-      "env": {
-        "EXPONENTIAL_API_KEY": "your-api-key-here"
-      }
+      "args": ["exponential-mcp", "serve"]
     }
   }
 }
 ```
+
+### For Claude Code (VSCode Extension)
+
+Create a `.mcp.json` file in your project directory:
+
+```json
+{
+  "mcpServers": {
+    "exponential": {
+      "command": "npx",
+      "args": ["-y", "exponential-mcp", "serve"]
+    }
+  }
+}
+```
+
+Then reload your VSCode window.
+
+**Note:** The API key is stored in the Exponential SDK config store (created by `npx exponential-mcp init`), so you don't need to specify it in the MCP configuration. Run `exponential-mcp config` to see the current storage path and values.
 
 ## Commands
 

@@ -5,13 +5,15 @@
  */
 
 import { program } from 'commander';
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
+import { createConfigStore } from 'exponential-sdk';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import * as readline from 'readline';
 
 const CONFIG_DIR = join(homedir(), '.config', 'exponential-mcp');
-const CONFIG_PATH = join(CONFIG_DIR, 'config.json');
+const LEGACY_CONFIG_PATH = join(CONFIG_DIR, 'config.json');
+const configStore = createConfigStore({ projectName: 'exponential-mcp' });
 const CLAUDE_CONFIG_PATH = join(homedir(), '.claude', 'claude_desktop_config.json');
 
 function prompt(question: string): Promise<string> {
@@ -25,6 +27,24 @@ function prompt(question: string): Promise<string> {
       resolve(answer.trim());
     });
   });
+}
+
+function migrateLegacyConfig(): void {
+  if (configStore.isAuthenticated() || !existsSync(LEGACY_CONFIG_PATH)) {
+    return;
+  }
+
+  try {
+    const legacy = JSON.parse(readFileSync(LEGACY_CONFIG_PATH, 'utf-8'));
+    if (legacy?.apiKey) {
+      configStore.saveConfig({
+        token: legacy.apiKey,
+        apiUrl: legacy.baseUrl || 'https://www.exponential.im',
+      });
+    }
+  } catch {
+    // Ignore legacy config parsing errors.
+  }
 }
 
 program
@@ -43,7 +63,8 @@ program
     // Get API key
     let apiKey = options.key;
     if (!apiKey) {
-      console.log('Get your API key from: https://www.exponential.im/settings/api-keys\n');
+      console.log('Create an API key at: https://www.exponential.im/settings/api-keys');
+      console.log('  → Select "JWT Token" as the token type\n');
       apiKey = await prompt('Paste your API key: ');
     }
 
@@ -52,18 +73,16 @@ program
       process.exit(1);
     }
 
-    // Create config directory
+    // Create config directory for legacy migrations.
     if (!existsSync(CONFIG_DIR)) {
       mkdirSync(CONFIG_DIR, { recursive: true });
     }
 
-    // Save config
-    const config = {
-      apiKey,
-      baseUrl: options.baseUrl || 'https://www.exponential.im',
-    };
-    writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
-    console.log(`✅ Config saved to ${CONFIG_PATH}\n`);
+    configStore.saveConfig({
+      token: apiKey,
+      apiUrl: options.baseUrl || 'https://www.exponential.im',
+    });
+    console.log(`✅ Config saved to ${configStore.getConfigPath()}\n`);
 
     // Update Claude Desktop config
     await updateClaudeConfig();
@@ -78,14 +97,16 @@ program
   .command('config')
   .description('Show current configuration')
   .action(() => {
-    if (!existsSync(CONFIG_PATH)) {
+    migrateLegacyConfig();
+
+    if (!configStore.isAuthenticated()) {
       console.log('No config found. Run "exponential-mcp init" first.');
       return;
     }
-    const config = JSON.parse(readFileSync(CONFIG_PATH, 'utf-8'));
+    const config = configStore.loadConfig();
     console.log('Current config:');
-    console.log(`  Base URL: ${config.baseUrl}`);
-    console.log(`  API Key: ${config.apiKey.substring(0, 10)}...`);
+    console.log(`  Base URL: ${config.apiUrl}`);
+    console.log(`  API Key: ${config.token.substring(0, 10)}...`);
   });
 
 program
