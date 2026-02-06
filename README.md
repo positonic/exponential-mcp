@@ -22,8 +22,8 @@ Paste your API key when prompted.
 ### 3. Configure for Your Claude Client
 
 **For Claude Desktop:**
+- `exponential-mcp init` will automatically configure Claude Desktop
 - Restart Claude Desktop
-- The server will be automatically configured
 
 **For Claude Code (VSCode Extension):**
 - The server uses `.mcp.json` in your project directory
@@ -47,14 +47,17 @@ Once connected, Claude can:
 
 ### For Claude Desktop
 
-Add this to `~/.claude/claude_desktop_config.json`:
+**macOS (recommended path):** `~/Library/Application Support/Claude/claude_desktop_config.json`  
+**Legacy path:** `~/.claude/claude_desktop_config.json`
+
+Add this to the appropriate file:
 
 ```json
 {
   "mcpServers": {
     "exponential": {
-      "command": "npx",
-      "args": ["exponential-mcp", "serve"]
+      "command": "/absolute/path/to/node",
+      "args": ["/absolute/path/to/exponential-mcp/dist/index.js"]
     }
   }
 }
@@ -77,7 +80,7 @@ Create a `.mcp.json` file in your project directory:
 
 Then reload your VSCode window.
 
-**Note:** The API key is stored in the Exponential SDK config store (created by `npx exponential-mcp init`), so you don't need to specify it in the MCP configuration. Run `exponential-mcp config` to see the current storage path and values.
+**Note:** The API key is stored in the Exponential SDK config store (created by `npx exponential-mcp init`), so you don't need to specify it in the MCP configuration. Run `exponential-mcp config` to see the current storage path and values. Run `exponential-mcp doctor` to print a recommended MCP config snippet for your machine.
 
 ## Commands
 
@@ -87,6 +90,9 @@ exponential-mcp init
 
 # Show current config
 exponential-mcp config
+
+# Diagnose local setup
+exponential-mcp doctor
 
 # Start server manually (usually not needed)
 exponential-mcp serve

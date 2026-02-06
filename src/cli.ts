@@ -8,13 +8,21 @@ import { program } from 'commander';
 import { createConfigStore } from 'exponential-sdk';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import * as readline from 'readline';
+import { fileURLToPath } from 'url';
 
 const CONFIG_DIR = join(homedir(), '.config', 'exponential-mcp');
 const LEGACY_CONFIG_PATH = join(CONFIG_DIR, 'config.json');
 const configStore = createConfigStore({ projectName: 'exponential-mcp' });
-const CLAUDE_CONFIG_PATH = join(homedir(), '.claude', 'claude_desktop_config.json');
+const LEGACY_CLAUDE_CONFIG_PATH = join(homedir(), '.claude', 'claude_desktop_config.json');
+const MACOS_CLAUDE_CONFIG_PATH = join(
+  homedir(),
+  'Library',
+  'Application Support',
+  'Claude',
+  'claude_desktop_config.json',
+);
 
 function prompt(question: string): Promise<string> {
   const rl = readline.createInterface({
@@ -44,6 +52,34 @@ function migrateLegacyConfig(): void {
     }
   } catch {
     // Ignore legacy config parsing errors.
+  }
+}
+
+function getClaudeConfigPath(): string {
+  if (process.platform === 'darwin') {
+    if (existsSync(MACOS_CLAUDE_CONFIG_PATH)) {
+      return MACOS_CLAUDE_CONFIG_PATH;
+    }
+    if (existsSync(LEGACY_CLAUDE_CONFIG_PATH)) {
+      return LEGACY_CLAUDE_CONFIG_PATH;
+    }
+    return MACOS_CLAUDE_CONFIG_PATH;
+  }
+  return LEGACY_CLAUDE_CONFIG_PATH;
+}
+
+function getServerEntry(): { command: string; args: string[] } {
+  const serverPath = fileURLToPath(new URL('./index.js', import.meta.url));
+  return {
+    command: process.execPath,
+    args: [serverPath],
+  };
+}
+
+function ensureParentDir(filePath: string): void {
+  const dir = dirname(filePath);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
   }
 }
 
@@ -117,20 +153,86 @@ program
     await import('./index.js');
   });
 
+program
+  .command('doctor')
+  .description('Diagnose local MCP setup for Claude Desktop')
+  .action(() => {
+    migrateLegacyConfig();
+
+    const issues: string[] = [];
+    const configPath = getClaudeConfigPath();
+    const recommended = getServerEntry();
+
+    console.log('🩺 Exponential MCP Doctor\n');
+
+    if (!configStore.isAuthenticated()) {
+      issues.push('No API key found. Run "exponential-mcp init" first.');
+    }
+
+    if (!existsSync(configPath)) {
+      issues.push(`Claude Desktop config not found at ${configPath}`);
+    }
+
+    let config: any = null;
+    if (existsSync(configPath)) {
+      try {
+        config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      } catch {
+        issues.push(`Claude Desktop config is not valid JSON: ${configPath}`);
+      }
+    }
+
+    const serverConfig = config?.mcpServers?.exponential;
+    if (!serverConfig) {
+      issues.push('No "exponential" entry found in Claude Desktop config.');
+    } else {
+      if (!serverConfig.command) {
+        issues.push('MCP config is missing "command" for Exponential.');
+      } else if (!existsSync(serverConfig.command)) {
+        issues.push(`MCP command not found: ${serverConfig.command}`);
+      }
+
+      const serverArg = Array.isArray(serverConfig.args) ? serverConfig.args[0] : null;
+      if (!serverArg) {
+        issues.push('MCP config args missing server entry point.');
+      } else if (!existsSync(serverArg)) {
+        issues.push(`MCP server entry not found: ${serverArg}`);
+      }
+    }
+
+    if (issues.length === 0) {
+      console.log('✅ No issues found. Claude Desktop should load the Exponential MCP server.');
+    } else {
+      console.log('⚠️  Issues found:\n');
+      for (const issue of issues) {
+        console.log(`- ${issue}`);
+      }
+    }
+
+    console.log('\nRecommended MCP config:\n');
+    console.log(
+      JSON.stringify(
+        {
+          mcpServers: {
+            exponential: recommended,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+  });
+
 async function updateClaudeConfig() {
-  const claudeConfigDir = join(homedir(), '.claude');
-  
-  // Create .claude directory if it doesn't exist
-  if (!existsSync(claudeConfigDir)) {
-    mkdirSync(claudeConfigDir, { recursive: true });
-  }
+  const configPath = getClaudeConfigPath();
+  ensureParentDir(configPath);
 
   let claudeConfig: any = { mcpServers: {} };
   
   // Read existing config if present
-  if (existsSync(CLAUDE_CONFIG_PATH)) {
+  if (existsSync(configPath)) {
     try {
-      claudeConfig = JSON.parse(readFileSync(CLAUDE_CONFIG_PATH, 'utf-8'));
+      claudeConfig = JSON.parse(readFileSync(configPath, 'utf-8'));
       if (!claudeConfig.mcpServers) {
         claudeConfig.mcpServers = {};
       }
@@ -140,13 +242,10 @@ async function updateClaudeConfig() {
   }
 
   // Add exponential server
-  claudeConfig.mcpServers.exponential = {
-    command: 'npx',
-    args: ['exponential-mcp', 'serve'],
-  };
+  claudeConfig.mcpServers.exponential = getServerEntry();
 
-  writeFileSync(CLAUDE_CONFIG_PATH, JSON.stringify(claudeConfig, null, 2));
-  console.log(`✅ Claude Desktop config updated: ${CLAUDE_CONFIG_PATH}`);
+  writeFileSync(configPath, JSON.stringify(claudeConfig, null, 2));
+  console.log(`✅ Claude Desktop config updated: ${configPath}`);
 }
 
 program.parse();
