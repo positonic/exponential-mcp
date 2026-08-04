@@ -139,13 +139,22 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'search',
-    description: 'Search across projects, actions, and goals',
+    description:
+      "Global text search across everything the user can access — projects, actions/tasks, goals, workspaces (and more entity types as the API grows). Same coverage as the app's Cmd+K palette. Returns typed results with ids, workspace, and app URL.",
     inputSchema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
           description: 'Search query'
+        },
+        workspaceId: {
+          type: 'string',
+          description: 'Optional workspace ID to restrict results to one workspace'
+        },
+        limit: {
+          type: 'number',
+          description: 'Max results per entity type (1-25, default 10)'
         }
       },
       required: ['query']
@@ -283,6 +292,8 @@ async function main() {
         case 'search': {
           const results = await trpcClient.search.global.query({
             query: args?.query as string,
+            workspaceId: args?.workspaceId as string | undefined,
+            limit: args?.limit as number | undefined,
           });
           return {
             content: [
