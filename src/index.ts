@@ -63,6 +63,21 @@ function loadClientConfig(): { token: string; apiUrl: string } {
   return { token, apiUrl };
 }
 
+/**
+ * `undefined` = leave the field alone, `null` = clear it, otherwise a Date.
+ * MCP arguments arrive as JSON, so an explicit clear can be either a real null
+ * or the string "null" depending on how the model emits it.
+ */
+function parseDateArg(raw: unknown): Date | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null || raw === 'null') return null;
+  const parsed = new Date(raw as string);
+  if (isNaN(parsed.getTime())) {
+    throw new Error(`Invalid date "${String(raw)}". Use an ISO datetime, or null to clear.`);
+  }
+  return parsed;
+}
+
 // Tool definitions
 const TOOLS: Tool[] = [
   {
@@ -80,7 +95,8 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'get_actions',
-    description: 'List actions/tasks. Can filter by project or status.',
+    description:
+      'List actions/tasks, optionally filtered by project or status. This is a flat list with no date filtering — to answer "what should I work on today" or "what am I behind on", use get_todays_actions instead.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -94,6 +110,102 @@ const TOOLS: Tool[] = [
           description: 'Filter by status (default: ACTIVE)'
         }
       }
+    }
+  },
+  {
+    name: 'get_todays_actions',
+    description:
+      "What is on the user's plate right now, split into overdue / today / inbox. This is the same set the /today page renders, across all workspaces. Use this FIRST for any question about today, this week, priorities, what to work on, or what the user is behind on — it is the only tool that surfaces overdue work. Returns action IDs, so pair it with update_action, defer_actions, or reschedule_actions to act on what it finds.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspaceId: {
+          type: 'string',
+          description: 'Optional workspace ID. Omit to span all workspaces (usually what you want).'
+        }
+      }
+    }
+  },
+  {
+    name: 'get_overdue_triage',
+    description:
+      'Explain WHY the overdue pile is the size it is, before proposing what to do about it. Splits overdue actions into "cohorts" — groups sharing one exact timestamp, the fingerprint of a bulk write like a generated project plan, which were almost certainly never individually due — and "loose" individually-dated actions, which are real missed commitments. Use this whenever the user has a lot of overdue work: recommend defer_actions (amnesty) for cohorts and a real decision for loose items. Rescheduling a cohort just re-inflicts the pile tomorrow.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspaceId: {
+          type: 'string',
+          description: 'Optional workspace ID. Omit to span all workspaces.'
+        }
+      }
+    }
+  },
+  {
+    name: 'update_action',
+    description:
+      'Update an action: rename, re-prioritise, move project, change status, or set its dates. scheduledStart is the "do date" — when the user plans to work on it — and it is what /today partitions on, taking precedence over dueDate. To move something out of the overdue bucket you must set scheduledStart; changing dueDate alone will not do it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Action ID' },
+        name: { type: 'string', description: 'New name' },
+        description: { type: 'string', description: 'New description' },
+        projectId: { type: 'string', description: 'Move to this project ID' },
+        status: {
+          type: 'string',
+          enum: ['ACTIVE', 'COMPLETED', 'CANCELLED'],
+          description: 'New status'
+        },
+        dueDate: {
+          type: 'string',
+          description: 'Deadline as an ISO datetime, or null to clear'
+        },
+        scheduledStart: {
+          type: 'string',
+          description: 'Do-date as an ISO datetime (e.g. 2026-08-05T09:00:00Z), or null to clear'
+        },
+        scheduledEnd: {
+          type: 'string',
+          description: 'End of the time block as an ISO datetime, or null to clear'
+        }
+      },
+      required: ['id']
+    }
+  },
+  {
+    name: 'defer_actions',
+    description:
+      'Amnesty: clear the dates on these actions so they fall back to their project backlog untimed. Use for work that was never really due on the date it carries — most often a bulk-created cohort from get_overdue_triage. The actions stay ACTIVE and are not deleted or archived; they simply stop counting as overdue. Prefer this over reschedule_actions when the dates were never a real commitment.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        actionIds: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Action IDs to defer'
+        }
+      },
+      required: ['actionIds']
+    }
+  },
+  {
+    name: 'reschedule_actions',
+    description:
+      'Move actions to a new do-date, for work that genuinely is still due, just later. Sets scheduledStart, pushing dueDate forward only where it would otherwise fall before it. If the actions were bulk-created and never individually due, use defer_actions instead — rescheduling them only re-inflicts the same pile tomorrow.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        actionIds: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Action IDs to reschedule'
+        },
+        date: {
+          type: 'string',
+          description: 'New do-date as an ISO datetime (e.g. 2026-08-05T09:00:00Z)'
+        }
+      },
+      required: ['actionIds', 'date']
     }
   },
   {
@@ -244,10 +356,40 @@ async function main() {
           };
         }
 
+        case 'get_todays_actions': {
+          const todays = await client.actions.getTodaysActions(
+            args?.workspaceId as string | undefined,
+          );
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(todays, null, 2),
+              },
+            ],
+          };
+        }
+
+        case 'get_overdue_triage': {
+          const triage = await client.actions.getOverdueTriage(
+            args?.workspaceId as string | undefined,
+          );
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(triage, null, 2),
+              },
+            ],
+          };
+        }
+
         case 'create_action': {
-          // SDK does not yet expose quickCreate, so we use the underlying tRPC client.
+          // quickCreate's input field is `name`, not `text` -- it parses natural
+          // language out of the name itself (dates, project names) when
+          // parseNaturalLanguage is on, which it is by default.
           const action = await trpcClient.action.quickCreate.mutate({
-            text: args?.text as string,
+            name: args?.text as string,
           });
           return {
             content: [
@@ -259,9 +401,60 @@ async function main() {
           };
         }
 
+        case 'update_action': {
+          const action = await client.actions.update({
+            id: args?.id as string,
+            name: args?.name as string | undefined,
+            description: args?.description as string | undefined,
+            projectId: args?.projectId as string | undefined,
+            status: args?.status as 'ACTIVE' | 'COMPLETED' | 'CANCELLED' | undefined,
+            dueDate: parseDateArg(args?.dueDate),
+            scheduledStart: parseDateArg(args?.scheduledStart),
+            scheduledEnd: parseDateArg(args?.scheduledEnd),
+          });
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Updated: ${action.name} (ID: ${action.id})`,
+              },
+            ],
+          };
+        }
+
+        case 'defer_actions': {
+          const result = await client.actions.bulkDefer(args?.actionIds as string[]);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: result.message,
+              },
+            ],
+          };
+        }
+
+        case 'reschedule_actions': {
+          const when = new Date(args?.date as string);
+          if (isNaN(when.getTime())) {
+            throw new Error(`Invalid date "${String(args?.date)}". Use an ISO datetime.`);
+          }
+          const result = await client.actions.bulkReschedule(
+            args?.actionIds as string[],
+            when,
+          );
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Rescheduled ${result.count} action${result.count === 1 ? '' : 's'} to ${when.toISOString()}`,
+              },
+            ],
+          };
+        }
+
         case 'complete_action': {
-          // SDK does not yet expose action updates, so we use the underlying tRPC client.
-          const action = await trpcClient.action.update.mutate({
+          const action = await client.actions.update({
             id: args?.id as string,
             status: 'COMPLETED',
           });

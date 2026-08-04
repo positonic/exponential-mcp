@@ -106,11 +106,30 @@ exponential-mcp serve
 |------|-------------|
 | `get_workspaces` | List all workspaces |
 | `get_projects` | List projects (optionally by workspace) |
-| `get_actions` | List actions/tasks (filter by project or status) |
+| `get_actions` | List actions/tasks (filter by project or status; no date filtering) |
+| `get_todays_actions` | **What's on your plate now** — overdue / today / inbox, across all workspaces |
+| `get_overdue_triage` | Why the overdue pile is that size: bulk-created cohorts vs real debt |
 | `create_action` | Create a new task (supports natural language) |
+| `update_action` | Rename, re-prioritise, move project, or set dates (incl. `scheduledStart`) |
+| `defer_actions` | Amnesty: clear dates, back to the project backlog untimed |
+| `reschedule_actions` | Move actions to a new do-date |
 | `complete_action` | Mark an action as done |
 | `get_goals` | List OKRs with progress |
 | `search` | Search across everything |
+
+### Asking about the day
+
+Use **`get_todays_actions`**, not `get_actions`, for anything about today,
+priorities, or what the user is behind on. `get_actions` has no date filtering
+at all, so it cannot distinguish overdue work from anything else.
+
+When there is a lot of overdue work, follow up with **`get_overdue_triage`**
+before proposing what to do. A large overdue count is usually a few bulk writes
+— a generated project plan stamped every row with one timestamp — not a large
+number of missed commitments. Those are **cohorts**, and the honest disposition
+is `defer_actions` (amnesty); `reschedule_actions` would just re-inflict the
+same pile tomorrow. Individually-dated **loose** actions are the ones that
+deserve a real decision.
 
 ## Development
 
