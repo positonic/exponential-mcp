@@ -15,9 +15,15 @@ import { ExponentialClient, createConfigStore } from 'exponential-sdk';
 import type { Action, Project, Workspace } from 'exponential-sdk';
 import { readFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 
 const LEGACY_CONFIG_PATH = join(homedir(), '.config', 'exponential-mcp', 'config.json');
+
+// Report the real package version rather than a hand-maintained literal that drifts.
+const PKG_VERSION: string = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf-8')
+).version;
 const configStore = createConfigStore({ projectName: 'exponential-mcp' });
 
 function migrateLegacyConfig(): void {
@@ -293,7 +299,7 @@ async function main() {
   const server = new Server(
     {
       name: 'exponential-mcp',
-      version: '0.1.0',
+      version: PKG_VERSION,
     },
     {
       capabilities: {
