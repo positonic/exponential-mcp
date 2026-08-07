@@ -12,7 +12,13 @@ import {
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
 import { ExponentialClient, createConfigStore } from 'exponential-sdk';
-import type { Action, Project, Workspace } from 'exponential-sdk';
+import type {
+  Action,
+  GoalStatus,
+  KeyResultStatus,
+  Project,
+  Workspace,
+} from 'exponential-sdk';
 import { readFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
 import { dirname, join } from 'path';
@@ -292,13 +298,60 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'get_goals',
-    description: 'List OKRs (Objectives and Key Results) with their progress',
+    description:
+      "List objectives (goals). Each objective carries its linked projects, which is how work ladders up to an OKR: every action has a projectId. Objectives have INTEGER ids — key results, which are separate, have CUIDs (see get_key_results). Use tree: true for the annual → quarterly cascade.",
     inputSchema: {
       type: 'object',
       properties: {
         workspaceId: {
           type: 'string',
-          description: 'Optional workspace ID'
+          description:
+            'Optional workspace ID. With it the list is workspace-wide (every member\'s objectives); without it you get your own.'
+        },
+        period: {
+          type: 'string',
+          description: 'Optional period filter, e.g. "Q3-2026" or "Annual-2026"'
+        },
+        status: {
+          type: 'string',
+          description: 'Optional status: planned, active, completed, archived, on-hold'
+        },
+        tree: {
+          type: 'boolean',
+          description:
+            'Return objectives nested parent → child (up to 5 levels), each with its projects and key results, instead of a flat list'
+        }
+      }
+    }
+  },
+  {
+    name: 'get_key_results',
+    description:
+      "List key results — the measurable half of an OKR. By default groups them under their objectives (the richest read: one call for 'how is the quarter going'). Pass flat: true for a bare list. Key result ids are CUIDs; the goalId tying one to its objective is an integer.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspaceId: {
+          type: 'string',
+          description:
+            "Optional workspace ID. With it the list is workspace-wide (every member's key results); without it you get your own."
+        },
+        period: {
+          type: 'string',
+          description: 'Optional period filter, e.g. "Q3-2026"'
+        },
+        goalId: {
+          type: 'number',
+          description: 'Optional objective ID (an integer). Only applies with flat: true.'
+        },
+        status: {
+          type: 'string',
+          description:
+            'Optional status: not-started, on-track, at-risk, off-track, achieved. Only applies with flat: true.'
+        },
+        flat: {
+          type: 'boolean',
+          description: 'Return a flat list of key results rather than grouping them by objective'
         }
       }
     }
@@ -522,15 +575,43 @@ async function main() {
           };
         }
 
+        // Goes through the SDK's GoalsApi rather than a raw tRPC path. The old
+        // implementation called `goal.list`, which does not exist — the tool
+        // hard-errored with `No procedure found on path "goal.list"` on every
+        // invocation.
         case 'get_goals': {
-          const goals = await trpcClient.goal.list.query({
-            workspaceId: args?.workspaceId as string,
-          });
+          const workspaceId = args?.workspaceId as string | undefined;
+          const period = args?.period as string | undefined;
+          const status = args?.status as GoalStatus | undefined;
+          const goals = args?.tree
+            ? await client.goals.tree({ workspaceId, status })
+            : await client.goals.list({ workspaceId, period, status });
           return {
             content: [
               {
                 type: 'text',
                 text: JSON.stringify(goals, null, 2),
+              },
+            ],
+          };
+        }
+
+        case 'get_key_results': {
+          const workspaceId = args?.workspaceId as string | undefined;
+          const period = args?.period as string | undefined;
+          const keyResults = args?.flat
+            ? await client.goals.keyResults.list({
+                workspaceId,
+                period,
+                goalId: args?.goalId as number | undefined,
+                status: args?.status as KeyResultStatus | undefined,
+              })
+            : await client.goals.keyResults.byObjective({ workspaceId, period });
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(keyResults, null, 2),
               },
             ],
           };
