@@ -1,6 +1,6 @@
 {
   "name": "exponential-mcp",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "MCP server for Exponential - connect Claude to your projects, actions, and goals",
   "main": "dist/index.js",
   "bin": {
