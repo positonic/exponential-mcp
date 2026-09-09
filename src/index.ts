@@ -16,7 +16,11 @@ import type {
   Action,
   GoalStatus,
   KeyResultStatus,
+  Meeting,
+  MeetingTypeFilter,
   Project,
+  ProjectPriority,
+  ProjectStatus,
   Workspace,
 } from 'exponential-sdk';
 import { readFileSync, existsSync } from 'fs';
@@ -138,6 +142,55 @@ function parseDateArg(raw: unknown): Date | null | undefined {
   return parsed;
 }
 
+const SUMMARY_PREVIEW_CHARS = 400;
+const DEFAULT_MEETING_LIMIT = 30;
+
+/**
+ * A meeting row as it comes off the list read is ~3k characters of metadata
+ * plus the full transcript, summary and notes bodies — a single hour-long
+ * transcript is easily 50k+ characters, and the server offers no limit or
+ * projection. The list tool sends a compact row with a summary preview; the
+ * detail tool sends everything except the transcript unless asked.
+ */
+function meetingListRow(m: Meeting): Record<string, unknown> {
+  const summary = m.summary ?? null;
+  const truncated = summary !== null && summary.length > SUMMARY_PREVIEW_CHARS;
+  return {
+    id: m.id,
+    title: m.title,
+    description: m.description,
+    meetingDate: m.meetingDate,
+    createdAt: m.createdAt,
+    durationSeconds: m.durationSeconds ?? null,
+    participantCount: m.participantCount ?? null,
+    projectId: m.projectId,
+    project: m.project ?? null,
+    workspaceId: m.workspaceId,
+    archivedAt: m.archivedAt,
+    source: m.sourceIntegration?.provider ?? null,
+    participants: (m.participants ?? []).map((p) => ({ id: p.id, name: p.name, email: p.email })),
+    actions: m.actions ?? [],
+    summaryPreview: truncated ? summary.slice(0, SUMMARY_PREVIEW_CHARS) + '…' : summary,
+    summaryTruncated: truncated,
+    hasNotes: Boolean(m.notes),
+    hasTranscript: Boolean(m.transcription),
+  };
+}
+
+function meetingDetail(m: Meeting, includeTranscript: boolean): Record<string, unknown> {
+  // sentencesJson / analyticsJson are the server's internal processing
+  // artefacts; they are not part of the SDK type and never useful to a model.
+  const { transcription, sentencesJson, analyticsJson, ...rest } = m as Meeting & {
+    sentencesJson?: unknown;
+    analyticsJson?: unknown;
+  };
+  return {
+    ...rest,
+    hasTranscript: Boolean(transcription),
+    ...(includeTranscript ? { transcription } : {}),
+  };
+}
+
 // Tool definitions
 const TOOLS: Tool[] = [
   {
@@ -151,6 +204,66 @@ const TOOLS: Tool[] = [
           description: 'Optional workspace ID to filter projects'
         }
       }
+    }
+  },
+  {
+    name: 'get_project',
+    description:
+      'Fetch one project with its relations: the objectives and key results it is linked to, DRI, team, dates, description, and linked meetings. get_projects returns none of the OKR links, so this is the tool for "what is this project driving?". It does NOT include the project\'s tasks — use get_actions with projectId for those. Accepts a project ID, a slug, or the slug-id form from app URLs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          description: 'Project ID, slug, or the compound slug-id from an app URL'
+        }
+      },
+      required: ['id']
+    }
+  },
+  {
+    name: 'update_project',
+    description:
+      'Update a project: rename, change status or priority, edit the description, set dates, or re-link it to objectives / key results. Only the fields you pass are changed. goalIds and keyResultIds REPLACE the existing links wholesale — read get_project first and pass the full set you want to keep. An empty keyResultIds clears the key-result links; an empty goalIds is ignored by the server.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Project ID' },
+        name: { type: 'string', description: 'New name' },
+        description: {
+          type: 'string',
+          description: 'New description. Pass an empty string to blank it.'
+        },
+        status: {
+          type: 'string',
+          enum: ['ACTIVE', 'ON_HOLD', 'COMPLETED', 'CANCELLED'],
+          description: 'New lifecycle status'
+        },
+        priority: {
+          type: 'string',
+          enum: ['HIGH', 'MEDIUM', 'LOW', 'NONE'],
+          description: 'New priority'
+        },
+        driId: {
+          type: 'string',
+          description: 'User ID of the directly responsible individual, or null to clear'
+        },
+        goalIds: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Objective IDs (integers, passed as strings) to link — replaces the current set'
+        },
+        keyResultIds: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Key result IDs to link — replaces the current set; [] clears'
+        },
+        startDate: { type: 'string', description: 'ISO datetime, or null to clear' },
+        endDate: { type: 'string', description: 'ISO datetime, or null to clear' },
+        reviewDate: { type: 'string', description: 'ISO datetime, or null to clear' },
+        nextActionDate: { type: 'string', description: 'ISO datetime, or null to clear' }
+      },
+      required: ['id']
     }
   },
   {
@@ -357,6 +470,120 @@ const TOOLS: Tool[] = [
     }
   },
   {
+    name: 'get_meetings',
+    description:
+      'List meetings the user can see — ones they own or attended, plus those on their projects and workspaces — newest first. Each row has metadata, participants, linked actions and a short preview of the AI summary; the full summary, notes and transcript are only in get_meeting. Use this to answer "when did I last meet Y" or to find a meeting ID, then get_meeting for what was actually said.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workspaceId: {
+          type: 'string',
+          description: 'Optional workspace ID to restrict to one workspace'
+        },
+        meetingType: {
+          type: 'string',
+          enum: ['all', 'mine', 'one_on_one'],
+          description:
+            'all (default) — everything visible; mine — meetings the user owns or attended; one_on_one — exactly two participants'
+        },
+        includeArchived: {
+          type: 'boolean',
+          description: 'Include archived meetings (default false)'
+        },
+        limit: {
+          type: 'number',
+          description: 'Max meetings to return, newest first (default 30)'
+        }
+      }
+    }
+  },
+  {
+    name: 'get_meeting',
+    description:
+      'Fetch one meeting in full: participants with speaker labels, linked actions, the AI summary, and the meeting notes. The raw transcript is omitted unless includeTranscript is true — it can be tens of thousands of characters, so only pull it when the summary and notes are not enough.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Meeting ID' },
+        includeTranscript: {
+          type: 'boolean',
+          description: 'Also return the raw transcript text (default false)'
+        }
+      },
+      required: ['id']
+    }
+  },
+  {
+    name: 'create_meeting',
+    description:
+      'Record a meeting in Exponential from a transcript or notes the user gives you. transcription is required by the server — if the user only has notes, put the notes text there too. A project-linked meeting inherits its project\'s workspace.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Meeting title' },
+        transcription: {
+          type: 'string',
+          description: 'Raw transcript text (required, at least one character)'
+        },
+        notes: { type: 'string', description: 'Meeting notes (Markdown)' },
+        description: { type: 'string', description: 'Short description' },
+        meetingDate: {
+          type: 'string',
+          description: 'When the meeting happened, as an ISO datetime (defaults to now)'
+        },
+        projectId: { type: 'string', description: 'Link to this project' },
+        workspaceId: { type: 'string', description: 'Workspace ID (ignored when projectId is set)' },
+        participants: {
+          type: 'array',
+          description: 'Who attended. Each entry needs at least one of userId, contactId, or email.',
+          items: {
+            type: 'object',
+            properties: {
+              userId: { type: 'string' },
+              contactId: { type: 'string' },
+              email: { type: 'string' },
+              name: { type: 'string' }
+            }
+          }
+        }
+      },
+      required: ['title', 'transcription']
+    }
+  },
+  {
+    name: 'update_meeting',
+    description:
+      'Edit a meeting\'s title, description, summary, date, or REPLACE its notes wholesale. To add to existing notes without rewriting them, use append_meeting_notes instead. Only the fields you pass are changed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Meeting ID' },
+        title: { type: 'string', description: 'New title' },
+        description: { type: 'string', description: 'New description' },
+        summary: { type: 'string', description: 'New summary' },
+        notes: { type: 'string', description: 'Replacement notes body (Markdown)' },
+        meetingDate: {
+          type: 'string',
+          description: 'When the meeting happened, as an ISO datetime, or null to clear'
+        }
+      },
+      required: ['id']
+    }
+  },
+  {
+    name: 'append_meeting_notes',
+    description:
+      'Append a block of text to a meeting\'s notes, separated by a blank line, creating the notes if there are none yet. This is the safe way to add a follow-up, decision, or action list to a meeting without clobbering what is already there.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Meeting ID' },
+        text: { type: 'string', description: 'Text to append (Markdown)' }
+      },
+      required: ['id', 'text']
+    }
+  },
+  {
     name: 'search',
     description:
       "Global text search across everything the user can access — projects, actions/tasks, goals, workspaces (and more entity types as the API grows). Same coverage as the app's Cmd+K palette. Returns typed results with ids, workspace, and app URL.",
@@ -429,6 +656,48 @@ async function main() {
               {
                 type: 'text',
                 text: JSON.stringify(projects, null, 2),
+              },
+            ],
+          };
+        }
+
+        case 'get_project': {
+          const project = await client.projects.get(args?.id as string);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(project, null, 2),
+              },
+            ],
+          };
+        }
+
+        case 'update_project': {
+          // `null` clears driId; the string "null" is the JSON-as-text form the
+          // model sometimes emits, same as parseDateArg handles for dates.
+          const rawDri = args?.driId;
+          const driId =
+            rawDri === undefined ? undefined : rawDri === null || rawDri === 'null' ? null : (rawDri as string);
+          const project = await client.projects.update({
+            id: args?.id as string,
+            name: args?.name as string | undefined,
+            description: args?.description as string | undefined,
+            status: args?.status as ProjectStatus | undefined,
+            priority: args?.priority as ProjectPriority | undefined,
+            driId,
+            goalIds: args?.goalIds as string[] | undefined,
+            keyResultIds: args?.keyResultIds as string[] | undefined,
+            startDate: parseDateArg(args?.startDate),
+            endDate: parseDateArg(args?.endDate),
+            reviewDate: parseDateArg(args?.reviewDate),
+            nextActionDate: parseDateArg(args?.nextActionDate),
+          });
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Updated project: ${project.name} (ID: ${project.id})`,
               },
             ],
           };
@@ -612,6 +881,106 @@ async function main() {
               {
                 type: 'text',
                 text: JSON.stringify(keyResults, null, 2),
+              },
+            ],
+          };
+        }
+
+        case 'get_meetings': {
+          const meetings = await client.meetings.list({
+            workspaceId: args?.workspaceId as string | undefined,
+            meetingType: args?.meetingType as MeetingTypeFilter | undefined,
+            includeArchived: args?.includeArchived as boolean | undefined,
+          });
+          const limit = Math.max(1, Number(args?.limit) || DEFAULT_MEETING_LIMIT);
+          const when = (m: Meeting) => new Date(m.meetingDate ?? m.createdAt).getTime();
+          const rows = [...meetings]
+            .sort((a, b) => when(b) - when(a))
+            .slice(0, limit)
+            .map(meetingListRow);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  { total: meetings.length, returned: rows.length, meetings: rows },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        }
+
+        case 'get_meeting': {
+          const meeting = await client.meetings.get(args?.id as string);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  meetingDetail(meeting, Boolean(args?.includeTranscript)),
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        }
+
+        case 'create_meeting': {
+          const meetingDate = parseDateArg(args?.meetingDate);
+          const meeting = await client.meetings.create({
+            title: args?.title as string,
+            transcription: args?.transcription as string,
+            notes: args?.notes as string | undefined,
+            description: args?.description as string | undefined,
+            meetingDate: meetingDate ?? undefined,
+            projectId: args?.projectId as string | undefined,
+            workspaceId: args?.workspaceId as string | undefined,
+            participants: args?.participants as
+              | { userId?: string; contactId?: string; email?: string; name?: string }[]
+              | undefined,
+          });
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Created meeting: ${meeting.title ?? '(untitled)'} (ID: ${meeting.id})`,
+              },
+            ],
+          };
+        }
+
+        case 'update_meeting': {
+          const meeting = await client.meetings.update({
+            id: args?.id as string,
+            title: args?.title as string | undefined,
+            description: args?.description as string | undefined,
+            summary: args?.summary as string | undefined,
+            notes: args?.notes as string | undefined,
+            meetingDate: parseDateArg(args?.meetingDate),
+          });
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Updated meeting: ${meeting.title ?? '(untitled)'} (ID: ${meeting.id})`,
+              },
+            ],
+          };
+        }
+
+        case 'append_meeting_notes': {
+          const meeting = await client.meetings.appendNotes(
+            args?.id as string,
+            args?.text as string,
+          );
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Appended to notes of: ${meeting.title ?? '(untitled)'} (ID: ${meeting.id})`,
               },
             ],
           };
