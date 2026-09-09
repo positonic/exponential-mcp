@@ -106,6 +106,8 @@ exponential-mcp serve
 |------|-------------|
 | `get_workspaces` | List all workspaces |
 | `get_projects` | List projects (optionally by workspace) |
+| `get_project` | One project in full: linked objectives & key results, DRI, team, dates |
+| `update_project` | Rename, change status/priority, set dates, re-link to OKRs |
 | `get_actions` | List actions/tasks (filter by project or status; no date filtering) |
 | `get_todays_actions` | **What's on your plate now** — overdue / today / inbox, across all workspaces |
 | `get_overdue_triage` | Why the overdue pile is that size: bulk-created cohorts vs real debt |
@@ -114,7 +116,13 @@ exponential-mcp serve
 | `defer_actions` | Amnesty: clear dates, back to the project backlog untimed |
 | `reschedule_actions` | Move actions to a new do-date |
 | `complete_action` | Mark an action as done |
-| `get_goals` | List OKRs with progress |
+| `get_goals` | List objectives, flat or as the annual → quarterly tree |
+| `get_key_results` | List key results, grouped by objective or flat |
+| `get_meetings` | List meetings, newest first, with a summary preview (no notes/transcript) |
+| `get_meeting` | One meeting with notes; transcript on request |
+| `create_meeting` | Record a meeting from a transcript or notes |
+| `update_meeting` | Edit title, description, summary, date, or replace notes |
+| `append_meeting_notes` | Add to a meeting's notes without overwriting them |
 | `search` | Search across everything |
 
 ### Asking about the day
