@@ -44,6 +44,9 @@ Once connected, Claude can:
 - **Complete actions** – "Mark the report task as done"
 - **View OKRs** – "What are my Q1 goals?"
 - **Search** – "Find anything related to Kenya"
+- **Work the CRM** – "Log that I emailed Keily today" / "Move the Onionpress deal to Proposal"
+- **Run the product backlog** – tickets, features, epics, stories, pages and decisions
+- **Track time** – log, confirm and report on the day
 
 ## Manual Setup
 
@@ -124,6 +127,30 @@ exponential-mcp serve
 | `update_meeting` | Edit title, description, summary, date, or replace notes |
 | `append_meeting_notes` | Add to a meeting's notes without overwriting them |
 | `search` | Search across everything |
+
+### Domain tools
+
+Alongside the tools above, every part of the [Exponential SDK](https://www.npmjs.com/package/exponential-sdk)
+is exposed as one tool per domain, so the MCP server can do anything the SDK
+and CLI can:
+
+`actions` · `projects` · `workspaces` · `goals` · `key_results` · `meetings` ·
+`time` · `decisions` · `contacts` · `organizations` · `deals` · `products` ·
+`features` · `scopes` · `requirements` · `areas` · `stories` · `epics` ·
+`tickets` · `labels` · `pages` · `comments`
+
+Each takes `{ operation, params }`. The tool description lists every operation
+with a one-line signature; `operation: "describe"` returns the full parameter
+schema for one operation (`params: { operation: "create" }`) or all of them.
+Invalid params come back as an error that includes the expected schema.
+
+```json
+{ "operation": "add_interaction",
+  "params": { "contactId": "…", "type": "EMAIL", "direction": "OUTBOUND", "subject": "Intro" } }
+```
+
+`comments` covers comments on actions, features, pages, goals and tickets — pass
+`target` to choose which.
 
 ### Asking about the day
 
