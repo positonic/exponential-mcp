@@ -27,6 +27,7 @@ import { readFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { DOMAINS, runDomainTool, toolDefinition } from './domains/index.js';
 
 const LEGACY_CONFIG_PATH = join(homedir(), '.config', 'exponential-mcp', 'config.json');
 
@@ -638,7 +639,7 @@ async function main() {
 
   // List available tools
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: TOOLS,
+    tools: [...TOOLS, ...[...DOMAINS.values()].map(toolDefinition)],
   }));
 
   // Handle tool calls
@@ -646,6 +647,19 @@ async function main() {
     const { name, arguments: args } = request.params;
 
     try {
+      const domain = DOMAINS.get(name);
+      if (domain) {
+        const result = await runDomainTool(domain, client, args);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
       switch (name) {
         case 'get_projects': {
           const projects: Project[] = await client.projects.list({
@@ -987,7 +1001,7 @@ async function main() {
         }
 
         case 'search': {
-          const results = await trpcClient.search.global.query({
+          const results = await client.search.global({
             query: args?.query as string,
             workspaceId: args?.workspaceId as string | undefined,
             limit: args?.limit as number | undefined,
