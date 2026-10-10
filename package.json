@@ -1,6 +1,6 @@
 {
   "name": "exponential-mcp",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "MCP server for Exponential - connect Claude to your projects, actions, goals, CRM, tickets and more",
   "main": "dist/index.js",
   "bin": {
@@ -26,7 +26,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "commander": "^12.0.0",
-    "exponential-sdk": "^1.20.1",
+    "exponential-sdk": "^1.21.0",
     "zod": "^3.22.0",
     "zod-to-json-schema": "^3.25.2"
   },

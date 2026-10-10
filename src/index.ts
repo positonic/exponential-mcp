@@ -28,6 +28,7 @@ import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { DOMAINS, runDomainTool, toolDefinition } from './domains/index.js';
+import { RUN_TOOLS, RUN_TOOL_NAMES, runContextFromEnv, runRunTool } from './runTools.js';
 
 const LEGACY_CONFIG_PATH = join(homedir(), '.config', 'exponential-mcp', 'config.json');
 
@@ -102,6 +103,21 @@ function migrateLegacyConfig(): void {
 }
 
 function loadClientConfig(): { token: string; apiUrl: string } {
+  // An explicit key in the environment wins over the stored config: a process
+  // that starts this server for a specific principal — `exponential runner
+  // start` launching it for an Assistant run with the Assistant's agent key —
+  // must act as that principal, not as whoever last ran `init` here.
+  const envToken = process.env.EXPONENTIAL_API_KEY || process.env.EXPONENTIAL_API_TOKEN;
+  if (envToken) {
+    assertTokenIsUsable(envToken, 'EXPONENTIAL_API_KEY');
+    return {
+      token: envToken,
+      apiUrl:
+        process.env.EXPONENTIAL_API_URL ||
+        process.env.EXPONENTIAL_BASE_URL ||
+        'https://www.exponential.im',
+    };
+  }
   migrateLegacyConfig();
 
   if (configStore.isAuthenticated()) {
@@ -110,22 +126,9 @@ function loadClientConfig(): { token: string; apiUrl: string } {
     return { token: config.token, apiUrl: config.apiUrl };
   }
 
-  const token = process.env.EXPONENTIAL_API_KEY || process.env.EXPONENTIAL_API_TOKEN;
-  const apiUrl =
-    process.env.EXPONENTIAL_API_URL ||
-    process.env.EXPONENTIAL_BASE_URL ||
-    'https://www.exponential.im';
-
-  if (!token) {
-    console.error('Error: No API key found.');
-    console.error(
-      'Run "npx exponential-mcp init" to set up, or set EXPONENTIAL_API_KEY env var.'
-    );
-    process.exit(1);
-  }
-
-  assertTokenIsUsable(token, 'EXPONENTIAL_API_KEY');
-  return { token, apiUrl };
+  console.error('Error: No API key found.');
+  console.error('Run "npx exponential-mcp init" to set up, or set EXPONENTIAL_API_KEY env var.');
+  process.exit(1);
 }
 
 /**
@@ -638,8 +641,12 @@ async function main() {
   );
 
   // List available tools
+  // Started for an Agent run (`exponential runner start` sets EXPONENTIAL_RUN_ID):
+  // the session gets the three run tools on top of everything else.
+  const runContext = runContextFromEnv();
+
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [...TOOLS, ...[...DOMAINS.values()].map(toolDefinition)],
+    tools: [...(runContext ? RUN_TOOLS : []), ...TOOLS, ...[...DOMAINS.values()].map(toolDefinition)],
   }));
 
   // Handle tool calls
@@ -647,6 +654,11 @@ async function main() {
     const { name, arguments: args } = request.params;
 
     try {
+      if (runContext && RUN_TOOL_NAMES.has(name)) {
+        const result = await runRunTool(client, runContext, name, args);
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
       const domain = DOMAINS.get(name);
       if (domain) {
         const result = await runDomainTool(domain, client, args);
