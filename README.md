@@ -6,12 +6,14 @@ Connect Claude to your [Exponential](https://exponential.im) workspace. Manage p
 
 ## Quick Start
 
-### 1. Create an API Key
+### 1. Create an Agent
 
-Go to [exponential.im/settings/api-keys](https://www.exponential.im/settings/api-keys) and create a new key:
-- Click **Create API Key**
-- Select **JWT Token** as the token type
-- Copy the generated key
+Open [exponential.im/settings/agents/new](https://www.exponential.im/settings/agents/new):
+- Name the agent after the app it will run in (for example "Claude")
+- Pick the workspaces it may work in
+- Click **Create agent** and copy the key (`exp_agent_…`) — it is shown once
+
+The agent is its own identity: what Claude does in Exponential is attributed to it, not to you.
 
 ### 2. Set Up the MCP Server
 
@@ -19,7 +21,7 @@ Go to [exponential.im/settings/api-keys](https://www.exponential.im/settings/api
 npx exponential-mcp init
 ```
 
-Paste your API key when prompted.
+Paste the agent key when prompted.
 
 ### 3. Configure for Your Claude Client
 
@@ -33,6 +35,29 @@ Paste your API key when prompted.
 - The server will be available in your current project
 
 ### 4. Ask Claude to manage your tasks!
+
+## One Key per App
+
+`init` saves one key that every app on the machine shares. To give each app its own identity, create a separate agent per app and set its key in that app's MCP config. `EXPONENTIAL_API_KEY` overrides the key saved by `init`.
+
+**Claude Code:**
+
+```bash
+claude mcp add exponential -e EXPONENTIAL_API_KEY=<key> -- npx -y exponential-mcp serve
+```
+
+**Codex** (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.exponential]
+command = "npx"
+args = ["-y", "exponential-mcp", "serve"]
+env = { EXPONENTIAL_API_KEY = "<key>" }
+```
+
+**Claude Desktop or `.mcp.json`:** add `"env": { "EXPONENTIAL_API_KEY": "<key>" }` to the `exponential` entry.
+
+Restart the app afterwards. Re-running `init` rewrites Claude Desktop's entry, including its `env`.
 
 ## What Claude Can Do
 
@@ -85,12 +110,12 @@ Create a `.mcp.json` file in your project directory:
 
 Then reload your VSCode window.
 
-**Note:** The API key is stored in the Exponential SDK config store (created by `npx exponential-mcp init`), so you don't need to specify it in the MCP configuration. Run `exponential-mcp config` to see the current storage path and values. Run `exponential-mcp doctor` to print a recommended MCP config snippet for your machine.
+**Note:** The key is stored in the Exponential SDK config store (created by `npx exponential-mcp init`), so you don't need to specify it in the MCP configuration unless the app needs its own key (see [One Key per App](#one-key-per-app)). A personal JWT token from [Settings → API keys](https://www.exponential.im/settings/api-keys) also works, but then Claude acts as you. Run `exponential-mcp config` to see the current storage path and values. Run `exponential-mcp doctor` to print a recommended MCP config snippet for your machine.
 
 ## Commands
 
 ```bash
-# Initialize with your API key
+# Initialize with an agent key
 exponential-mcp init
 
 # Show current config
