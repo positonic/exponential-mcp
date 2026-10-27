@@ -1,7 +1,10 @@
 import { z } from 'zod';
 import { type Domain, date, id, op, workspaceId } from './framework.js';
 
-const note = z.string().optional().describe('Why — recorded on the revision and shown in the page history');
+const note = z
+  .string()
+  .optional()
+  .describe('Why you made this change — one sentence. Always send it: it is shown in the page history, and a write without one reads "No reason given" to everyone.');
 const source = z
   .string()
   .nullable()
@@ -83,7 +86,7 @@ export const pages: Domain = {
       run: (client, params) => client.pages.update(params),
     }),
     history: op({
-      summary: 'The page\'s revisions, newest first: who, when, kind (create/editor/markdown/restore), note and body size. Never the bodies.',
+      summary: 'The page\'s revisions, newest first: who (authorHidden when names are withheld from you; a baseline row has none), when, kind (baseline/create/editor/markdown/restore), note, provenance and body size. Never the bodies.',
       params: z.object({
         id: id('Page'),
         limit: z.number().int().min(1).max(200).optional().describe('Default 50'),
@@ -98,7 +101,7 @@ export const pages: Domain = {
     }),
     diff: op({
       summary:
-        'What a revision changed, as a unified diff of the Markdown with added/removed counts. against: "previous" (default — the revision before it), "current" (the page now) or another revision id.',
+        'What a revision changed: a unified diff of the Markdown with added/removed counts, plus titleChanged and provenanceChanged (source/asOf on both sides). against: "previous" (default — the revision before it), "current" (the page now) or another revision id.',
       params: z.object({
         id: id('Page'),
         revisionId: id('Revision'),
