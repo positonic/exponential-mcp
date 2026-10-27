@@ -23,7 +23,7 @@ export const pages: Domain = {
       params: z.object({
         workspaceId,
         projectId: id('Project').optional(),
-        search: z.string().optional().describe('Case-insensitive substring match on title or body'),
+        search: z.string().optional().describe('Case-insensitive title match; use the search operation for content or meaning'),
       }),
       run: (client, params) => client.pages.list(params),
     }),
@@ -86,7 +86,7 @@ export const pages: Domain = {
       run: (client, params) => client.pages.update(params),
     }),
     history: op({
-      summary: 'The page\'s revisions, newest first: who (authorHidden when names are withheld from you; a baseline row has none), when, kind (baseline/create/editor/markdown/restore), note, provenance and body size. Never the bodies.',
+      summary: 'The page\'s revisions, newest first: who (authorHidden when names are withheld from you; baseline and automated rows have no author and the note says what wrote them), when, kind (baseline/create/editor/markdown/restore), note, provenance and body size. Never the bodies.',
       params: z.object({
         id: id('Page'),
         limit: z.number().int().min(1).max(200).optional().describe('Default 50'),
@@ -112,8 +112,19 @@ export const pages: Domain = {
     restore: op({
       summary:
         'Put a revision\'s title and body back as the page\'s current content. A forward write: docVersion bumps and a "restore" revision is recorded, so nothing is lost.',
-      params: z.object({ id: id('Page'), revisionId: id('Revision'), note }),
-      run: (client, { id, revisionId, note }) => client.pages.restore(id, revisionId, { note }),
+      params: z.object({
+        id: id('Page'),
+        revisionId: id('Revision'),
+        note,
+        baseVersion: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('The newest revision\'s docVersion from history when you decided; a newer save makes this a CONFLICT. Always send it.'),
+      }),
+      run: (client, { id, revisionId, note, baseVersion }) =>
+        client.pages.restore(id, revisionId, { note, baseVersion }),
     }),
   },
 };
