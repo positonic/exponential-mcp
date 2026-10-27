@@ -590,21 +590,30 @@ const TOOLS: Tool[] = [
   {
     name: 'search',
     description:
-      "Global text search across everything the user can access — projects, actions/tasks, goals, workspaces (and more entity types as the API grows). Same coverage as the app's Cmd+K palette. Returns typed results with ids, workspace, and app URL.",
+      "Global search across everything the user can access — projects, actions/tasks, goals, workspaces, pages, meetings and more. Same coverage as the app's Cmd+K palette; matches titles. Set semantic: true to search the workspace's Knowledge index by meaning instead (meetings, resources, documents and pages, each with its best-matching passage) — that needs workspaceId. For pages only, the `pages` tool's search operation is more precise. Returns typed results with ids, workspace, and app URL.",
     inputSchema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'Search query'
+          description: 'Search query (3+ characters when semantic)'
         },
         workspaceId: {
           type: 'string',
-          description: 'Optional workspace ID to restrict results to one workspace'
+          description: 'Workspace ID to restrict results to one workspace. Required when semantic is true.'
         },
         limit: {
           type: 'number',
-          description: 'Max results per entity type (1-25, default 10)'
+          description: 'Max results per entity type (1-25, default 10); max sources when semantic (1-20, default 5)'
+        },
+        semantic: {
+          type: 'boolean',
+          description: 'Search by meaning over the Knowledge index instead of matching titles'
+        },
+        sourceTypes: {
+          type: 'array',
+          items: { type: 'string', enum: ['transcription', 'resource', 'document', 'page'] },
+          description: 'With semantic: restrict to these source kinds'
         }
       },
       required: ['query']
@@ -1013,6 +1022,21 @@ async function main() {
         }
 
         case 'search': {
+          if (args?.semantic) {
+            const workspaceId = args?.workspaceId as string | undefined;
+            if (!workspaceId) {
+              throw new Error('semantic search runs one workspace at a time: pass workspaceId (see get_workspaces).');
+            }
+            const knowledge = await client.search.knowledge({
+              query: args?.query as string,
+              workspaceId,
+              limit: args?.limit as number | undefined,
+              sourceTypes: args?.sourceTypes as ('transcription' | 'resource' | 'document' | 'page')[] | undefined,
+            });
+            return {
+              content: [{ type: 'text', text: JSON.stringify(knowledge, null, 2) }],
+            };
+          }
           const results = await client.search.global({
             query: args?.query as string,
             workspaceId: args?.workspaceId as string | undefined,
