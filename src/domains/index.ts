@@ -3,6 +3,7 @@ import { actions } from './actions.js';
 import { areas } from './areas.js';
 import { comments } from './comments.js';
 import { contacts } from './contacts.js';
+import { databases } from './databases.js';
 import { deals } from './deals.js';
 import { decisions } from './decisions.js';
 import { epics } from './epics.js';
@@ -49,6 +50,7 @@ export const DOMAINS: ReadonlyMap<string, Domain> = new Map(
     tickets,
     labels,
     pages,
+    databases,
     comments,
   ].map((domain) => [domain.name, domain])
 );
