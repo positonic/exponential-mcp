@@ -27,14 +27,16 @@ function goalIdOf(value: string | number): number {
   return n;
 }
 
-/** Feature-only / goal-only add fields, rejected loudly on other targets rather than silently dropped. */
-function assertOnly(t: Target, allowed: Target, fields: Record<string, unknown>): void {
-  if (t === allowed) return;
+/** Target-specific add fields, rejected loudly on other targets rather than silently dropped. */
+function assertOnly(t: Target, allowed: Target | Target[], fields: Record<string, unknown>): void {
+  const targets = Array.isArray(allowed) ? allowed : [allowed];
+  if (targets.includes(t)) return;
   const present = Object.entries(fields)
     .filter(([, v]) => v !== undefined)
     .map(([k]) => k);
   if (present.length) {
-    throw new Error(`${present.join(', ')} can only be used with target "${allowed}", not "${t}".`);
+    const names = targets.map((a) => `"${a}"`).join(' or ');
+    throw new Error(`${present.join(', ')} can only be used with target ${names}, not "${t}".`);
   }
 }
 
@@ -47,7 +49,7 @@ async function listTicketComments(client: ExponentialClient, ticketId: string): 
 export const comments: Domain = {
   name: 'comments',
   description:
-    'Comments on actions, features (PRDs), knowledge pages, goals (objectives) and tickets — pick the entity with `target`. Threaded replies and anchored-thread resolve/unresolve exist only on features. Editing and deleting are author-only.',
+    'Comments on actions, features (PRDs), knowledge pages, goals (objectives) and tickets — pick the entity with `target`. Anchored threads (a comment on a span of the body), threaded replies and resolve/unresolve exist on features and pages. Editing and deleting are author-only.',
   operations: {
     list: op({
       summary:
@@ -70,26 +72,56 @@ export const comments: Domain = {
     }),
     add: op({
       summary:
-        'Add a top-level comment. All targets; scopeId/threadId/quotedText are feature-only, parentUpdateId is goal-only.',
+        'Add a top-level comment. All targets. On a page, pass quotedText to anchor the comment to that span of the body: the server mints the threadId, highlights the span, and refuses the comment if the text matches no span or several (add quotePrefix/quoteSuffix to pick one). scopeId/threadId are feature-only, parentUpdateId is goal-only.',
       params: z.object({
         target,
         targetId,
         body,
         scopeId: z.string().optional().describe('Feature only: post to this scope’s activity feed instead of the feature’s'),
         threadId: z.string().optional().describe('Feature only: anchor to a span of the PRD body; omit for a doc-level comment'),
-        quotedText: z.string().optional().describe('Feature only: the anchored text being quoted'),
+        quotedText: z
+          .string()
+          .optional()
+          .describe(
+            'Feature or page: the anchored text being quoted. On a page this alone anchors the comment; copy the text exactly as it reads on the page, without markdown syntax',
+          ),
+        quotePrefix: z
+          .string()
+          .max(200)
+          .optional()
+          .describe('Page only, with quotedText: the text just before the quote, to pick one of several matches'),
+        quoteSuffix: z
+          .string()
+          .max(200)
+          .optional()
+          .describe('Page only, with quotedText: the text just after the quote, to pick one of several matches'),
         parentUpdateId: z.string().optional().describe('Goal only: thread under this goal update instead of the goal itself'),
       }),
-      run: (client, { target: t, targetId: tid, body, scopeId, threadId, quotedText, parentUpdateId }) => {
-        assertOnly(t, 'feature', { scopeId, threadId, quotedText });
+      run: (
+        client,
+        { target: t, targetId: tid, body, scopeId, threadId, quotedText, quotePrefix, quoteSuffix, parentUpdateId },
+      ) => {
+        assertOnly(t, 'feature', { scopeId, threadId });
+        assertOnly(t, ['feature', 'page'], { quotedText });
+        assertOnly(t, 'page', { quotePrefix, quoteSuffix });
         assertOnly(t, 'goal', { parentUpdateId });
+        if ((quotePrefix !== undefined || quoteSuffix !== undefined) && quotedText === undefined) {
+          throw new Error('quotePrefix/quoteSuffix need quotedText.');
+        }
         switch (t) {
           case 'action':
             return client.actionComments.add({ actionId: String(tid), content: body });
           case 'feature':
             return client.featureComments.create({ featureId: String(tid), body, scopeId, threadId, quotedText });
           case 'page':
-            return client.pageComments.create({ pageId: String(tid), body });
+            return client.pageComments.create({
+              pageId: String(tid),
+              body,
+              ...(quotedText !== undefined ? { quotedText } : {}),
+              ...(quotePrefix !== undefined || quoteSuffix !== undefined
+                ? { quoteContext: { prefix: quotePrefix, suffix: quoteSuffix } }
+                : {}),
+            });
           case 'goal':
             return client.goalComments.add({ goalId: goalIdOf(tid), content: body, parentUpdateId });
           case 'ticket':
@@ -134,38 +166,41 @@ export const comments: Domain = {
       },
     }),
     reply: op({
-      summary: 'Reply to a comment. Feature target only. Replies to replies still hang off the root comment.',
+      summary: 'Reply to a comment. Feature and page targets. Replies to replies still hang off the root comment.',
       params: z.object({
         target,
         commentId: z.string().describe('ID of the comment being replied to'),
         body,
       }),
       run: (client, { target: t, commentId, body }) => {
-        if (t !== 'feature') unsupported('reply', t, 'feature');
+        if (t === 'page') return client.pageComments.reply({ parentId: commentId, body });
+        if (t !== 'feature') unsupported('reply', t, 'feature, page');
         return client.featureComments.reply({ parentId: commentId, body });
       },
     }),
     resolve: op({
-      summary: 'Mark an anchored comment thread resolved. Feature target only; only anchored threads have a threadId.',
+      summary: 'Mark an anchored comment thread resolved. Feature and page targets; only anchored threads have a threadId.',
       params: z.object({
         target,
         targetId,
         threadId: z.string().describe('The anchored thread’s threadId (from the comment), not a comment ID'),
       }),
       run: (client, { target: t, targetId: tid, threadId }) => {
-        if (t !== 'feature') unsupported('resolve', t, 'feature');
+        if (t === 'page') return client.pageComments.resolve({ pageId: String(tid), threadId });
+        if (t !== 'feature') unsupported('resolve', t, 'feature, page');
         return client.featureComments.resolve({ featureId: String(tid), threadId });
       },
     }),
     unresolve: op({
-      summary: 'Reopen a resolved anchored comment thread. Feature target only.',
+      summary: 'Reopen a resolved anchored comment thread. Feature and page targets.',
       params: z.object({
         target,
         targetId,
         threadId: z.string().describe('The anchored thread’s threadId (from the comment), not a comment ID'),
       }),
       run: (client, { target: t, targetId: tid, threadId }) => {
-        if (t !== 'feature') unsupported('unresolve', t, 'feature');
+        if (t === 'page') return client.pageComments.unresolve({ pageId: String(tid), threadId });
+        if (t !== 'feature') unsupported('unresolve', t, 'feature, page');
         return client.featureComments.unresolve({ featureId: String(tid), threadId });
       },
     }),

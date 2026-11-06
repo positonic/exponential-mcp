@@ -150,7 +150,11 @@ Invalid params come back as an error that includes the expected schema.
 ```
 
 `comments` covers comments on actions, features, pages, goals and tickets — pass
-`target` to choose which.
+`target` to choose which. On a page, `add` with `quotedText` anchors the comment
+to that span of the body (the server mints the thread and highlights the span);
+copy the text as it reads on the page, and add `quotePrefix`/`quoteSuffix` when
+it appears more than once. A quote that doesn't resolve is refused, not posted
+unanchored. `reply`, `resolve` and `unresolve` work on features and pages.
 
 `databases` is the typed write path for tables inside pages (ADR-0078): a
 database is a block in a page body and each row is a page. **Values are typed
