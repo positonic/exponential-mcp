@@ -14,6 +14,7 @@ import { labels } from './labels.js';
 import { meetings } from './meetings.js';
 import { organizations } from './organizations.js';
 import { pages } from './pages.js';
+import { positions } from './positions.js';
 import { products } from './products.js';
 import { projects } from './projects.js';
 import { requirements } from './requirements.js';
@@ -32,6 +33,7 @@ export const DOMAINS: ReadonlyMap<string, Domain> = new Map(
     actions,
     projects,
     workspaces,
+    positions,
     goals,
     keyResults,
     meetings,
