@@ -159,10 +159,10 @@ Alongside the tools above, every part of the [Exponential SDK](https://www.npmjs
 is exposed as one tool per domain, so the MCP server can do anything the SDK
 and CLI can:
 
-`actions` · `projects` · `workspaces` · `goals` · `key_results` · `meetings` ·
+`actions` · `projects` · `workspaces` · `positions` · `goals` · `key_results` · `meetings` ·
 `time` · `decisions` · `contacts` · `organizations` · `deals` · `products` ·
 `features` · `scopes` · `requirements` · `areas` · `stories` · `epics` ·
-`tickets` · `labels` · `pages` · `comments`
+`tickets` · `labels` · `pages` · `databases` · `comments`
 
 Each takes `{ operation, params }`. The tool description lists every operation
 with a one-line signature; `operation: "describe"` returns the full parameter
@@ -176,6 +176,17 @@ Invalid params come back as an error that includes the expected schema.
 
 `comments` covers comments on actions, features, pages, goals and tickets — pass
 `target` to choose which.
+
+`positions` is a workspace's roles & responsibilities — the Positions on the
+settings page: list, create, update, set_holders, delete, and import_many
+(upsert by title, with a dry run). Writes need your own API key, not an agent
+key, and owner/admin, except that a holder may edit their own Position's remit.
+
+`databases` is the typed write path for tables inside pages (ADR-0078): a
+database is a block in a page body and each row is a page. **Values are typed
+per property** — a select takes an option name, a date an ISO string, a person
+a user ID — and a wrong value is refused naming the property, so call `get`
+first to learn the schema. Reading the page with `pages` shows the table.
 
 ### Asking about the day
 

@@ -3,6 +3,7 @@ import { actions } from './actions.js';
 import { areas } from './areas.js';
 import { comments } from './comments.js';
 import { contacts } from './contacts.js';
+import { databases } from './databases.js';
 import { deals } from './deals.js';
 import { decisions } from './decisions.js';
 import { epics } from './epics.js';
@@ -13,6 +14,7 @@ import { labels } from './labels.js';
 import { meetings } from './meetings.js';
 import { organizations } from './organizations.js';
 import { pages } from './pages.js';
+import { positions } from './positions.js';
 import { products } from './products.js';
 import { projects } from './projects.js';
 import { requirements } from './requirements.js';
@@ -31,6 +33,7 @@ export const DOMAINS: ReadonlyMap<string, Domain> = new Map(
     actions,
     projects,
     workspaces,
+    positions,
     goals,
     keyResults,
     meetings,
@@ -49,6 +52,7 @@ export const DOMAINS: ReadonlyMap<string, Domain> = new Map(
     tickets,
     labels,
     pages,
+    databases,
     comments,
   ].map((domain) => [domain.name, domain])
 );
