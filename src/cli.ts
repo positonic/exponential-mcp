@@ -76,6 +76,29 @@ function getServerEntry(): { command: string; args: string[] } {
   };
 }
 
+const DEFAULT_BASE_URL = 'https://www.exponential.im';
+
+// Plain text when piped, so logs and CI output stay readable.
+const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
+const bold = (text: string) => (useColor ? `\x1b[1m${text}\x1b[22m` : text);
+const dim = (text: string) => (useColor ? `\x1b[2m${text}\x1b[22m` : text);
+const green = (text: string) => (useColor ? `\x1b[32m${text}\x1b[39m` : text);
+
+/** One app per agent: printed after setup so a second app gets its own key. */
+function printOtherAppsHelp(): void {
+  console.log(bold('Using Exponential in another app?'));
+  console.log('Create a separate agent for each app, then set its key in that app\'s');
+  console.log('MCP config. EXPONENTIAL_API_KEY overrides the key saved by init.\n');
+  console.log(`  ${dim('Claude Code')}`);
+  console.log('  claude mcp add exponential -e EXPONENTIAL_API_KEY=<key> -- npx -y exponential-mcp serve\n');
+  console.log(`  ${dim('Codex  ~/.codex/config.toml')}`);
+  console.log('  [mcp_servers.exponential]');
+  console.log('  command = "npx"');
+  console.log('  args = ["-y", "exponential-mcp", "serve"]');
+  console.log('  env = { EXPONENTIAL_API_KEY = "<key>" }\n');
+  console.log(dim('Restart the app afterwards. Re-running init resets the Claude Desktop entry.'));
+}
+
 function ensureParentDir(filePath: string): void {
   const dir = dirname(filePath);
   if (!existsSync(dir)) {
@@ -90,22 +113,25 @@ program
 
 program
   .command('init')
-  .description('Set up Exponential MCP with your API key')
-  .option('-k, --key <key>', 'API key (or will prompt)')
-  .option('--base-url <url>', 'Custom Exponential URL (default: https://www.exponential.im)')
+  .description('Set up Exponential MCP with an agent key')
+  .option('-k, --key <key>', 'Agent key (or will prompt)')
+  .option('--base-url <url>', `Custom Exponential URL (default: ${DEFAULT_BASE_URL})`)
   .action(async (options) => {
-    console.log('🚀 Setting up Exponential MCP...\n');
+    const baseUrl: string = (options.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
+
+    console.log(`\n${bold('Exponential MCP setup')}\n`);
 
     // Get API key
     let apiKey = options.key;
     if (!apiKey) {
-      console.log('Create an API key at: https://www.exponential.im/settings/api-keys');
-      console.log('  → Select "JWT Token" as the token type\n');
-      apiKey = await prompt('Paste your API key: ');
+      console.log('1. Create an agent for this app and copy its key:');
+      console.log(`   ${bold(`${baseUrl}/settings/agents/new`)}\n`);
+      apiKey = await prompt('2. Paste the key: ');
+      console.log();
     }
 
     if (!apiKey) {
-      console.error('❌ API key is required');
+      console.error('A key is required. Run init again when you have one.');
       process.exit(1);
     }
 
@@ -116,17 +142,16 @@ program
 
     configStore.saveConfig({
       token: apiKey,
-      apiUrl: options.baseUrl || 'https://www.exponential.im',
+      apiUrl: baseUrl,
     });
-    console.log(`✅ Config saved to ${configStore.getConfigPath()}\n`);
+    console.log(`${green('✓')} Key saved      ${dim(configStore.getConfigPath())}`);
 
     // Update Claude Desktop config
     await updateClaudeConfig();
 
-    console.log('\n🎉 Setup complete!\n');
-    console.log('Next steps:');
-    console.log('  1. Restart Claude Desktop');
-    console.log('  2. Ask Claude to "list my projects" or "create a task"\n');
+    console.log(`\n${bold('Done.')} Restart Claude Desktop, then ask: "What's on my plate today?"\n`);
+    printOtherAppsHelp();
+    console.log();
   });
 
 program
@@ -142,7 +167,11 @@ program
     const config = configStore.loadConfig();
     console.log('Current config:');
     console.log(`  Base URL: ${config.apiUrl}`);
-    console.log(`  API Key: ${config.token.substring(0, 10)}...`);
+    // 16 chars: enough to tell agent keys apart past their `exp_agent_` prefix.
+    console.log(`  API Key: ${config.token.substring(0, 16)}...`);
+    if (process.env.EXPONENTIAL_API_KEY || process.env.EXPONENTIAL_API_TOKEN) {
+      console.log('  Note: EXPONENTIAL_API_KEY is set here and overrides the saved key.');
+    }
   });
 
 program
@@ -237,7 +266,7 @@ async function updateClaudeConfig() {
         claudeConfig.mcpServers = {};
       }
     } catch (e) {
-      console.log('⚠️  Could not parse existing Claude config, creating new one');
+      console.log('! Could not parse the existing Claude Desktop config; writing a new one');
     }
   }
 
@@ -245,7 +274,7 @@ async function updateClaudeConfig() {
   claudeConfig.mcpServers.exponential = getServerEntry();
 
   writeFileSync(configPath, JSON.stringify(claudeConfig, null, 2));
-  console.log(`✅ Claude Desktop config updated: ${configPath}`);
+  console.log(`${green('✓')} Claude Desktop ${dim(configPath)}`);
 }
 
 program.parse();
